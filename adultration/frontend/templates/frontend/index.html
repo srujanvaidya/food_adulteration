@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Adulteration Detection</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'frontend/css/style.css' %}">
+    <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="nav-brand">
+                <i class="fas fa-shield-alt"></i>
+                <h1>FoodGuard</h1>
+            </div>
+            <nav class="nav-menu">
+                <a href="#home" class="nav-link active">Home</a>
+                <a href="#features" class="nav-link">Features</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">Detect Food Adulteration with AI</h1>
+                <p class="hero-subtitle">Protect your health by identifying adulterated food products using advanced barcode scanning and image analysis</p>
+                <div class="hero-buttons">
+                    <button class="btn btn-primary" onclick="showScanner()">
+                        <i class="fas fa-qrcode"></i>
+                        Scan Barcode
+                    </button>
+                    <button class="btn btn-secondary" onclick="showImageUpload()">
+                        <i class="fas fa-camera"></i>
+                        Upload Image
+                    </button>
+                </div>
+            </div>
+            <div class="hero-image">
+                <div class="scanning-animation">
+                    <i class="fas fa-search"></i>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Scanner Modal -->
+    <div id="scannerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Barcode Scanner</h2>
+                <span class="close" onclick="closeModal('scannerModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <!-- Scanner Options -->
+                <div class="scanner-options">
+                    <div class="option-tabs">
+                        <button class="tab-btn active" onclick="switchTab('camera')">
+                            <i class="fas fa-camera"></i>
+                            Camera Scan
+                        </button>
+                        <button class="tab-btn" onclick="switchTab('manual')">
+                            <i class="fas fa-keyboard"></i>
+                            Manual Entry
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Camera Scanner -->
+                <div id="cameraTab" class="scanner-tab active">
+                    <div class="camera-container">
+                        <div id="cameraPreview" class="camera-preview">
+                            <div class="camera-placeholder">
+                                <i class="fas fa-camera"></i>
+                                <p>Camera will appear here</p>
+                            </div>
+                        </div>
+                        <div class="camera-controls">
+                            <button class="btn btn-primary" id="startCameraBtn" onclick="startCamera()">
+                                <i class="fas fa-video"></i>
+                                Start Camera
+                            </button>
+                            <button class="btn btn-secondary" id="stopCameraBtn" onclick="stopCamera()" style="display: none;">
+                                <i class="fas fa-stop"></i>
+                                Stop Camera
+                            </button>
+                        </div>
+                        <div class="debug-controls" style="margin-top: 1rem;">
+                            <button class="btn btn-secondary" onclick="testAPI()" style="font-size: 0.9rem;">
+                                <i class="fas fa-bug"></i>
+                                Test API Connection
+                            </button>
+                        </div>
+                        <div class="scanner-info">
+                            <p><i class="fas fa-info-circle"></i> Position the barcode within the camera view to scan automatically</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manual Entry -->
+                <div id="manualTab" class="scanner-tab">
+                    <div class="manual-container">
+                        <div class="input-group">
+                            <input type="text" id="barcodeInput" placeholder="Enter barcode number manually" class="form-input">
+                            <button class="btn btn-primary" onclick="scanBarcode()">
+                                <i class="fas fa-search"></i>
+                                Analyze
+                            </button>
+                        </div>
+                        <div class="scanner-info">
+                            <p><i class="fas fa-info-circle"></i> Enter the barcode number from your food product (usually 8-13 digits)</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results -->
+                <div id="barcodeResult" class="result-container" style="display: none;">
+                    <div class="result-header">
+                        <h3>Scan Results</h3>
+                    </div>
+                    <div class="result-content">
+                        <div class="loading" id="barcodeLoading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <p>Analyzing product...</p>
+                        </div>
+                        <div id="barcodeData" class="result-data"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Upload Modal -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Image Analysis</h2>
+                <span class="close" onclick="closeModal('imageModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="upload-container">
+                    <div class="upload-area" id="uploadArea">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Drag & drop your food image here</p>
+                        <p class="upload-hint">or click to browse</p>
+                        <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                    </div>
+                    <div class="upload-preview" id="imagePreview" style="display: none;">
+                        <img id="previewImage" src="" alt="Preview">
+                        <button class="btn btn-primary" onclick="analyzeImage()">
+                            <i class="fas fa-search"></i>
+                            Analyze Image
+                        </button>
+                    </div>
+                </div>
+                <div id="imageResult" class="result-container" style="display: none;">
+                    <div class="result-header">
+                        <h3>Analysis Results</h3>
+                    </div>
+                    <div class="result-content">
+                        <div class="loading" id="imageLoading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <p>Analyzing image...</p>
+                        </div>
+                        <div id="imageData" class="result-data"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-qrcode"></i>
+                    </div>
+                    <h3>Barcode Scanning</h3>
+                    <p>Scan product barcodes to get detailed information about ingredients and nutritional content from our database.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-camera"></i>
+                    </div>
+                    <h3>Image Analysis</h3>
+                    <p>Upload food images for AI-powered analysis to detect potential adulteration and quality issues.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Safety Reports</h3>
+                    <p>Get comprehensive safety reports with detailed analysis and recommendations for safe consumption.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-shield-alt"></i>
+                    <h3>FoodGuard</h3>
+                </div>
+                <div class="footer-info">
+                    <p><strong>Created by the students of SKNCOE:</strong></p>
+                    <p class="student-names">Srujan Vaidya, Arkaj Patil, Rudresh Shinkar</p>
+                </div>
+                <div class="footer-bottom">
+                    <p>&copy; 2024 FoodGuard. Protecting your health through technology.</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast Notifications -->
+    <div id="toast" class="toast"></div>
+
+    {% csrf_token %}
+    {% load static %}
+    <script src="{% static 'frontend/js/main.js' %}"></script>
+</body>
+</html>
