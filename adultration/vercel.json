@@ -1,7 +1,7 @@
 {
   "builds": [
     {
-      "src": "adultration_main/wsgi.py",
+      "src": "adultration/adultration_main/wsgi.py",
       "use": "@vercel/python",
       "config": { "maxLambdaSize": "15mb", "runtime": "python3.11" }
     }
@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "adultration_main/wsgi.py"
+      "dest": "adultration/adultration_main/wsgi.py"
     }
   ]
 }
