@@ -4,7 +4,8 @@ asgiref==3.9.1
 cachetools==5.5.2
 certifi==2025.8.3
 charset-normalizer==3.4.3
-Django==5.2.5
+Django==5.0.3
+gunicorn
 djangorestframework==3.16.1
 filelock==3.19.1
 fsspec==2025.7.0
