@@ -6,3 +6,4 @@ urlpatterns = [
     path('barcode/', views.FrontendBarcodeView.as_view(), name='frontend_barcode'),
     path('image/', views.FrontendImageView.as_view(), name='frontend_image'),
 ]
+
