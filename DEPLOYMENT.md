@@ -183,3 +183,23 @@ docker-compose exec web python manage.py dbshell
 - Static files are served by WhiteNoise middleware
 - Media files are stored in persistent volumes
 - Logs are stored in `/app/logs/` directory
+
+
+## Railway Deployment
+
+1. Push your repo to GitHub.
+2. In Railway, create a new project and choose Deploy from GitHub.
+3. Add environment variables in Railway project settings:
+   - SECRET_KEY
+   - DEBUG=False
+   - ALLOWED_HOSTS=.railway.app,your-domain.com
+   - DATABASE_URL (use Railway PostgreSQL plugin or your own URL)
+   - GEMINI_API_KEY
+4. If using Docker, Railway will build from Dockerfile automatically. Otherwise, Railway will use Procfile.
+5. Set Start Command (if needed):
+   - web: gunicorn adultration_main.wsgi:application --workers 3 --bind 0.0.0.0:$PORT
+6. Deploy. After first deploy, run migrations from Railway shell:
+   - python manage.py migrate
+7. Optionally create a superuser:
+   - python manage.py createsuperuser
+
