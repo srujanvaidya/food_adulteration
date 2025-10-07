@@ -29,12 +29,9 @@ RUN mkdir -p /app/media
 # Create logs directory
 RUN mkdir -p /app/logs
 
-# Collect static files
-RUN python manage.py collectstatic --noinput
-
 # Expose port (Railway provides $PORT)
 EXPOSE 8000
 
 # Run the application with Gunicorn for production, binding to provided $PORT if set
 ENV PORT=8000
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 3 adultration_main.wsgi:application"]
+CMD ["sh", "-c", "python adultration/manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:${PORT} --workers 3 adultration_main.wsgi:application"]

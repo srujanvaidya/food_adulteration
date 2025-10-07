@@ -699,15 +699,29 @@ function analyzeImage() {
         },
         body: formData
     })
-    .then(response => {
+    .then(async response => {
         console.log('Response status:', response.status);
         console.log('Response headers:', response.headers);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+
+        let data;
+        try {
+            data = await response.json();
+        } catch (e) {
+            data = { error: `Non-JSON response (status ${response.status})` };
         }
-        
-        return response.json();
+
+        if (!response.ok) {
+            // Surface server error details instead of throwing a generic network error
+            hideElement('imageLoading');
+            showElement('imageData');
+            showToast(`Error: ${data.error || 'Image analysis failed'}`, 'error');
+            displayImageResults(data);
+            // Add scroll indicator after a short delay
+            setTimeout(() => { addScrollIndicator(); }, 500);
+            return; // Stop normal success flow
+        }
+
+        return data;
     })
     .then(data => {
         console.log('API Response received:', data);
@@ -733,14 +747,14 @@ function analyzeImage() {
         hideElement('imageLoading');
         showElement('imageData');
         console.error('Fetch Error:', error);
-        showToast('Network error. Please try again.', 'error');
+        showToast(`Network error: ${error.message}`, 'error');
         
         // Display error information
         document.getElementById('imageData').innerHTML = `
             <div class="analysis-container">
                 <div class="analysis-header">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <h4>Network Error</h4>
+                    <h4>Request Error</h4>
                 </div>
                 
                 <div class="analysis-section">
@@ -788,7 +802,195 @@ function analyzeImage() {
     });
 }
 
-// Display image analysis results
+// Simple extraction helpers to structure plain-text AI output
+function extractRiskLevel(text) {
+    const match = text.match(/\b(risk\s*level|overall\s*risk)\s*[:\-]?\s*(low|medium|high)\b/i);
+    return match ? match[2].charAt(0).toUpperCase() + match[2].slice(1).toLowerCase() : null;
+}
+
+function extractBullets(text) {
+    const lines = text.split(/\n+/);
+    const bullets = [];
+    lines.forEach(line => {
+        const trimmed = line.trim();
+        if (/^([\-•\*]|\d+\.)\s+/.test(trimmed)) {
+            bullets.push(trimmed.replace(/^([\-•\*]|\d+\.)\s+/, ''));
+        }
+    });
+    return bullets;
+}
+
+function extractRecommendations(text) {
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    return sentences.filter(s => /(recommend|should|avoid|consider|suggest)/i.test(s));
+}
+
+function extractHomeTests(text) {
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    return sentences.filter(s => /(home\s*test|perform|procedure|mix|drop|add|observe)/i.test(s));
+}
+
+function extractIndicators(text) {
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    return sentences.filter(s => /(color|texture|smell|odor|packaging|sediment|foam|contaminant|impurity)/i.test(s));
+}
+
+// Render helper for plain-text AI analysis into structured sections
+function parseAiAnalysis(text) {
+    const raw = (text || '').trim();
+    const lines = raw.split(/\n+/).map(l => l.trim()).filter(Boolean);
+
+    const sectionTitles = [
+        'summary', 'key findings', 'findings', 'indicators', 'adulteration indicators',
+        'recommendations', 'home tests', 'tests', 'risk', 'risk level', 'overall risk'
+    ];
+
+    const sections = {
+        summary: [],
+        keyPoints: [],
+        indicators: [],
+        recommendations: [],
+        homeTests: [],
+        riskLevel: null
+    };
+
+    let current = 'summary';
+    const isHeading = (s) => sectionTitles.some(t => new RegExp(`^${t}[:\-]?$`, 'i').test(s));
+    const bulletRegex = /^([\-•\*]|\d+\.)\s+/;
+
+    for (const line of lines) {
+        if (isHeading(line.replace(/\s+/g, ' ').toLowerCase())) {
+            const key = line.toLowerCase().replace(/[:\-]\s*$/, '');
+            if (/risk/.test(key)) current = 'risk';
+            else if (/home\s*tests|tests/.test(key)) current = 'homeTests';
+            else if (/recommend/.test(key)) current = 'recommendations';
+            else if (/indicator|adulteration/.test(key)) current = 'indicators';
+            else if (/finding/.test(key)) current = 'keyPoints';
+            else current = 'summary';
+            continue;
+        }
+
+        if (current === 'risk') {
+            const m = line.match(/\b(low|medium|high)\b/i);
+            if (m && !sections.riskLevel) sections.riskLevel = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+            continue;
+        }
+
+        if (bulletRegex.test(line)) {
+            const item = line.replace(bulletRegex, '').trim();
+            if (current === 'homeTests') sections.homeTests.push(item);
+            else if (current === 'recommendations') sections.recommendations.push(item);
+            else if (current === 'indicators') sections.indicators.push(item);
+            else if (current === 'keyPoints') sections.keyPoints.push(item);
+            else sections.keyPoints.push(item);
+        } else {
+            // Non-bullet sentence; classify heuristically
+            if (/test|procedure|mix|drop|observe/i.test(line)) sections.homeTests.push(line);
+            else if (/recommend|should|avoid|consider|suggest/i.test(line)) sections.recommendations.push(line);
+            else if (/color|texture|odor|smell|packaging|sediment|foam|contaminant|impurity/i.test(line)) sections.indicators.push(line);
+            else sections.summary.push(line);
+        }
+    }
+
+    // Collapse summary paragraphs
+    const summaryText = sections.summary.join(' ');
+    return {
+        summary: summaryText,
+        keyPoints: sections.keyPoints,
+        indicators: sections.indicators,
+        recommendations: sections.recommendations,
+        homeTests: sections.homeTests,
+        riskLevel: sections.riskLevel
+    };
+}
+
+function renderTextAnalysisSections(summaryText, meta = {}) {
+    const resultContainer = document.getElementById('imageData');
+    const parsed = parseAiAnalysis(summaryText);
+    const summary = parsed.summary || '';
+    const bullets = parsed.keyPoints || [];
+    const indicators = parsed.indicators || [];
+    const riskLevel = parsed.riskLevel || null;
+    const recommendations = parsed.recommendations || [];
+    const homeTests = parsed.homeTests || [];
+ 
+    resultContainer.innerHTML = `
+        <div class="analysis-container">
+            <div class="analysis-header">
+                <i class="fas fa-microscope"></i>
+                <h4>AI-Powered Food Analysis</h4>
+            </div>
+ 
+            ${summary ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-quote-left"></i> Summary</h5>
+                <div class="success-message" style="background:#f0f5ff;color:#1a237e;border-left:4px solid #3b82f6">
+                    <p>${summary.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>')}</p>
+                </div>
+            </div>` : ''}
+ 
+            ${riskLevel ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-chart-line"></i> Risk Assessment</h5>
+                <div class="risk-assessment">
+                    <div class="risk-level">
+                        <strong>Risk Level:</strong>
+                        <span class="risk-badge ${getRiskClass ? getRiskClass(riskLevel) : ''}">${riskLevel}</span>
+                    </div>
+                </div>
+            </div>` : ''}
+ 
+            ${indicators.length ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-exclamation-triangle"></i> Adulteration Indicators</h5>
+                <ul style="margin-left:1.25rem;line-height:1.6">
+                    ${indicators.map(i => `<li>${i}</li>`).join('')}
+                </ul>
+            </div>` : ''}
+ 
+            ${bullets.length ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-list-ul"></i> Key Findings</h5>
+                <ul style="margin-left:1.25rem;line-height:1.6">
+                    ${bullets.map(point => `<li>${point}</li>`).join('')}
+                </ul>
+            </div>` : ''}
+ 
+            ${recommendations.length ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-lightbulb"></i> Recommendations</h5>
+                <ul style="margin-left:1.25rem;line-height:1.6">
+                    ${recommendations.map(r => `<li>${r}</li>`).join('')}
+                </ul>
+            </div>` : ''}
+ 
+            ${homeTests.length ? `
+            <div class="analysis-section">
+                <h5><i class="fas fa-home"></i> Home Tests</h5>
+                <ul style="margin-left:1.25rem;line-height:1.6">
+                    ${homeTests.map(t => `<li>${t}</li>`).join('')}
+                </ul>
+            </div>` : ''}
+ 
+            <div class="analysis-section">
+                <h5><i class="fas fa-file-alt"></i> Image Details</h5>
+                <div class="info-grid">
+                    <div class="info-item"><strong>Filename:</strong> ${meta.filename || '—'}</div>
+                    <div class="info-item"><strong>Size:</strong> ${meta.file_size ? (Math.round(meta.file_size/1024)) + ' KB' : '—'}</div>
+                    <div class="info-item"><strong>Type:</strong> ${meta.content_type || '—'}</div>
+                </div>
+            </div>
+ 
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="analyzeAnotherImage()">
+                    <i class="fas fa-plus"></i>
+                    Analyze Another Image
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 function displayImageResults(data) {
     const resultContainer = document.getElementById('imageData');
     
@@ -818,6 +1020,98 @@ function displayImageResults(data) {
     console.log('Processed Analysis:', analysis);
     console.log('Status:', status);
     
+    // If computed analysis is a plain string, render structured sections
+    if (typeof analysis === 'string') {
+        renderTextAnalysisSections(analysis, data);
+        return;
+    }
+
+    // If analysis is plain text, render a structured, professional layout
+    if (typeof data.analysis === 'string') {
+        const summary = data.analysis.trim();
+        const bullets = extractBullets(summary);
+        const indicators = extractIndicators(summary);
+        const riskLevel = extractRiskLevel(summary);
+        const recommendations = extractRecommendations(summary);
+        const homeTests = extractHomeTests(summary);
+
+        resultContainer.innerHTML = `
+            <div class="analysis-container">
+                <div class="analysis-header">
+                    <i class="fas fa-microscope"></i>
+                    <h4>AI-Powered Food Analysis</h4>
+                </div>
+
+                <div class="analysis-section">
+                    <h5><i class="fas fa-quote-left"></i> Summary</h5>
+                    <div class="success-message" style="background:#f0f5ff;color:#1a237e;border-left:4px solid #3b82f6">
+                        <p>${summary.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>')}</p>
+                    </div>
+                </div>
+
+                ${riskLevel ? `
+                <div class="analysis-section">
+                    <h5><i class="fas fa-chart-line"></i> Risk Assessment</h5>
+                    <div class="risk-assessment">
+                        <div class="risk-level">
+                            <strong>Risk Level:</strong>
+                            <span class="risk-badge ${getRiskClass(riskLevel)}">${riskLevel}</span>
+                        </div>
+                    </div>
+                </div>` : ''}
+
+                ${indicators.length ? `
+                <div class="analysis-section">
+                    <h5><i class="fas fa-exclamation-triangle"></i> Adulteration Indicators</h5>
+                    <ul style="margin-left:1.25rem;line-height:1.6">
+                        ${indicators.map(i => `<li>${i}</li>`).join('')}
+                    </ul>
+                </div>` : ''}
+
+                ${bullets.length ? `
+                <div class="analysis-section">
+                    <h5><i class="fas fa-list-ul"></i> Key Points</h5>
+                    <ul style="margin-left:1.25rem;line-height:1.6">
+                        ${bullets.map(point => `<li>${point}</li>`).join('')}
+                    </ul>
+                </div>` : ''}
+
+                ${recommendations.length ? `
+                <div class="analysis-section">
+                    <h5><i class="fas fa-lightbulb"></i> Recommendations</h5>
+                    <ul style="margin-left:1.25rem;line-height:1.6">
+                        ${recommendations.map(r => `<li>${r}</li>`).join('')}
+                    </ul>
+                </div>` : ''}
+
+                ${homeTests.length ? `
+                <div class="analysis-section">
+                    <h5><i class="fas fa-home"></i> Home Tests</h5>
+                    <ul style="margin-left:1.25rem;line-height:1.6">
+                        ${homeTests.map(t => `<li>${t}</li>`).join('')}
+                    </ul>
+                </div>` : ''}
+
+                <div class="analysis-section">
+                    <h5><i class="fas fa-file-alt"></i> Image Details</h5>
+                    <div class="info-grid">
+                        <div class="info-item"><strong>Filename:</strong> ${data.filename || '—'}</div>
+                        <div class="info-item"><strong>Size:</strong> ${data.file_size ? (Math.round(data.file_size/1024)) + ' KB' : '—'}</div>
+                        <div class="info-item"><strong>Type:</strong> ${data.content_type || '—'}</div>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-primary" onclick="analyzeAnotherImage()">
+                        <i class="fas fa-plus"></i>
+                        Analyze Another Image
+                    </button>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
     if (status === 'success' && analysis) {
         
         resultContainer.innerHTML = `
@@ -987,131 +1281,9 @@ function displayImageResults(data) {
             </div>
         `;
     } else {
-        // Fallback for error cases or unexpected data structure
-        console.log('Displaying fallback - Analysis failed or unexpected data structure');
-        
-        // Show raw data for debugging
-        const rawDataDisplay = data.raw_response || JSON.stringify(data, null, 2);
-        
-        resultContainer.innerHTML = `
-            <div class="analysis-container">
-                <div class="analysis-header">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h4>Analysis Status</h4>
-                </div>
-                
-                <div class="analysis-section">
-                    <h5><i class="fas fa-info-circle"></i> Analysis Information</h5>
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <strong>Status:</strong> ${data.status || 'Unknown'}
-                        </div>
-                        <div class="info-item">
-                            <strong>Filename:</strong> ${data.filename || 'Unknown'}
-                        </div>
-                        <div class="info-item">
-                            <strong>File Size:</strong> ${data.file_size ? (data.file_size / 1024).toFixed(2) + ' KB' : 'Unknown'}
-                        </div>
-                        <div class="info-item">
-                            <strong>Content Type:</strong> ${data.content_type || 'Unknown'}
-                        </div>
-                    </div>
-                </div>
-                
-                ${data.error ? `
-                    <div class="analysis-section">
-                        <h5><i class="fas fa-exclamation-triangle"></i> Error Details</h5>
-                        <div class="error-details">
-                            <p><strong>Error:</strong> ${data.error}</p>
-                        </div>
-                    </div>
-                ` : ''}
-                
-                ${rawDataDisplay ? `
-                    <div class="analysis-section">
-                        <h5><i class="fas fa-code"></i> Raw Response</h5>
-                        <div class="raw-response">
-                            <pre style="background: #f7fafc; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px; max-height: 300px;">${rawDataDisplay}</pre>
-                        </div>
-                    </div>
-                ` : ''}
-                
-                <div class="analysis-section">
-                    <h5><i class="fas fa-home"></i> General Home Tests</h5>
-                    <div class="home-tests">
-                        <div class="test-card">
-                            <h6><i class="fas fa-flask"></i> Visual Inspection Test</h6>
-                            <div class="test-details">
-                                <div class="test-materials">
-                                    <strong>Materials Needed:</strong>
-                                    <ul>
-                                        <li>Good lighting</li>
-                                        <li>Magnifying glass (optional)</li>
-                                        <li>Clean white surface</li>
-                                    </ul>
-                                </div>
-                                <div class="test-procedure">
-                                    <strong>Procedure:</strong>
-                                    <p>Examine the food product carefully for any unusual colors, textures, foreign particles, or inconsistencies. Check for proper packaging and expiration dates.</p>
-                                </div>
-                                <div class="test-results">
-                                    <div class="expected-result">
-                                        <strong>Expected Result:</strong>
-                                        <p>Natural appearance consistent with the product type, uniform color and texture</p>
-                                    </div>
-                                    <div class="adulteration-indicator">
-                                        <strong>Adulteration Indicator:</strong>
-                                        <p>Unusual colors, foreign particles, inconsistent texture, or suspicious packaging</p>
-                                    </div>
-                                </div>
-                                <div class="safety-notes">
-                                    <strong><i class="fas fa-shield-alt"></i> Safety Notes:</strong>
-                                    <p>Do not consume if you notice any suspicious characteristics. When in doubt, discard the product.</p>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="test-card">
-                            <h6><i class="fas fa-flask"></i> Water Solubility Test</h6>
-                            <div class="test-details">
-                                <div class="test-materials">
-                                    <strong>Materials Needed:</strong>
-                                    <ul>
-                                        <li>Clean glass of water</li>
-                                        <li>Small amount of food product</li>
-                                    </ul>
-                                </div>
-                                <div class="test-procedure">
-                                    <strong>Procedure:</strong>
-                                    <p>Add a small amount of the food product to clean water and observe how it behaves.</p>
-                                </div>
-                                <div class="test-results">
-                                    <div class="expected-result">
-                                        <strong>Expected Result:</strong>
-                                        <p>Natural behavior based on product type (e.g., milk forms white layer, honey sinks)</p>
-                                    </div>
-                                    <div class="adulteration-indicator">
-                                        <strong>Adulteration Indicator:</strong>
-                                        <p>Unusual mixing behavior, excessive color bleeding, or unexpected reactions</p>
-                                    </div>
-                                </div>
-                                <div class="safety-notes">
-                                    <strong><i class="fas fa-shield-alt"></i> Safety Notes:</strong>
-                                    <p>Do not consume the tested portion. Use this test for observation only.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="action-buttons">
-                    <button class="btn btn-primary" onclick="analyzeAnotherImage()">
-                        <i class="fas fa-redo"></i>
-                        Try Another Image
-                    </button>
-                </div>
-            </div>
-        `;
+        // Graceful fallback: parse any available text into sections, no raw JSON
+        const summaryText = typeof data.analysis === 'string' ? data.analysis : (typeof data.error === 'string' ? data.error : 'Analysis unavailable. Please try again.');
+        renderTextAnalysisSections(summaryText, data);
     }
 }
 
